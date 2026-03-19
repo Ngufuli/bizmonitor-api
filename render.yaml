@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: bizmonitor-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false              # Set manually in Render dashboard to your Supabase URL
+      - key: SECRET_KEY
+        generateValue: true      # Render auto-generates a secure random value
+      - key: ALLOWED_ORIGINS
+        value: https://your-frontend.vercel.app
+      - key: DEBUG
+        value: false
+
+# No databases: section — Supabase handles the DB externally
