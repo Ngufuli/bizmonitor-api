@@ -1,9 +1,9 @@
 """
-main.py — BizMonitor API v2
-FastAPI + PostgreSQL + JWT Auth + Role-Based Access
+main.py — BizMonitor API v3
+Multi-business + Admin Panel + Activity Log
 """
 
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -19,14 +19,12 @@ from auth import (
 from config import get_settings
 
 settings = get_settings()
-
-# Create tables
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title=settings.APP_NAME,
-    version=settings.APP_VERSION,
-    description="BizMonitor — production API with JWT auth and role-based access",
+    version="3.0.0",
+    description="BizMonitor — Multi-business, JWT auth, Admin panel",
 )
 
 app.add_middleware(
@@ -38,10 +36,25 @@ app.add_middleware(
 )
 
 
+# ── Business Access Helper ────────────────────────────────────────────────────
+def get_business_or_403(business_id: int, current_user: models.User, db: Session):
+    """Raises 403 if user has no access to this business."""
+    role = crud.get_user_role_in_business(db, current_user.id, business_id)
+    if not role:
+        raise HTTPException(status_code=403, detail="You are not a member of this business")
+    return role
+
+def require_business_manager(business_id: int, current_user: models.User, db: Session):
+    role = get_business_or_403(business_id, current_user, db)
+    if role == "employee":
+        raise HTTPException(status_code=403, detail="Managers and above only")
+    return role
+
+
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
 def root():
-    return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION}
+    return {"status": "ok", "app": settings.APP_NAME, "version": "3.0.0"}
 
 @app.get("/health", tags=["Health"])
 def health(db: Session = Depends(get_db)):
@@ -49,222 +62,191 @@ def health(db: Session = Depends(get_db)):
         db.execute(models.User.__table__.select().limit(1))
         return {"status": "ok", "database": "connected"}
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 @app.post("/auth/login", response_model=schemas.Token, tags=["Auth"])
 def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    """Login with email + password. Returns a JWT token."""
     user = authenticate_user(db, form.username, form.password)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise HTTPException(status_code=401, detail="Incorrect email or password", headers={"WWW-Authenticate": "Bearer"})
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is deactivated")
-
-    token = create_access_token(
-        data={"sub": str(user.id)},
-        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    )
+    token = create_access_token(data={"sub": str(user.id)}, expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
     return {"access_token": token, "token_type": "bearer", "user": user}
-
 
 @app.get("/auth/me", response_model=schemas.UserOut, tags=["Auth"])
 def me(current_user: models.User = Depends(get_current_user)):
-    """Returns the currently authenticated user's profile."""
     return current_user
 
-
 @app.post("/auth/change-password", tags=["Auth"])
-def change_password(
-    data: schemas.ChangePassword,
-    current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
+def change_password(data: schemas.ChangePassword, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not data.current_password:
+        raise HTTPException(status_code=400, detail="Current password required")
     if not verify_password(data.current_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     crud.change_password(db, current_user, data.new_password)
     return {"message": "Password changed successfully"}
 
 
-# ── Users (admin only) ────────────────────────────────────────────────────────
-@app.get("/users", response_model=list[schemas.UserOut], tags=["Users"])
-def list_users(
-    _: models.User = Depends(require_admin),
-    db: Session = Depends(get_db)
-):
-    return crud.get_users(db)
-
-
-@app.post("/users", response_model=schemas.UserOut, status_code=201, tags=["Users"])
-def create_user(
-    user: schemas.UserCreate,
-    _: models.User = Depends(require_admin),
-    db: Session = Depends(get_db)
-):
-    """Admin creates a new user account."""
-    from auth import get_user_by_email
-    if get_user_by_email(db, user.email):
-        raise HTTPException(status_code=409, detail="Email already registered")
+# ── First-Run Setup ───────────────────────────────────────────────────────────
+@app.post("/setup", response_model=schemas.UserOut, status_code=201, tags=["Setup"])
+def first_run_setup(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    if crud.count_users(db) > 0:
+        raise HTTPException(status_code=403, detail="Setup already complete")
+    user.role = "admin"
     return crud.create_user(db, user)
 
 
-@app.patch("/users/{user_id}", response_model=schemas.UserOut, tags=["Users"])
-def update_user(
-    user_id: int,
-    data: schemas.UserUpdate,
-    _: models.User = Depends(require_admin),
-    db: Session = Depends(get_db)
-):
-    user = crud.update_user(db, user_id, data)
+# ── Businesses ────────────────────────────────────────────────────────────────
+@app.get("/businesses", response_model=list[schemas.BusinessOut], tags=["Businesses"])
+def list_my_businesses(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Returns all businesses the logged-in user has access to."""
+    return crud.get_businesses_for_user(db, current_user.id)
+
+@app.post("/businesses", response_model=schemas.BusinessOut, status_code=201, tags=["Businesses"])
+def create_business(data: schemas.BusinessCreate, current_user: models.User = Depends(require_admin), db: Session = Depends(get_db)):
+    return crud.create_business(db, data, creator_id=current_user.id)
+
+@app.get("/businesses/all", response_model=list[schemas.BusinessOut], tags=["Businesses"])
+def list_all_businesses(_: models.User = Depends(require_admin), db: Session = Depends(get_db)):
+    return crud.get_all_businesses(db)
+
+@app.patch("/businesses/{business_id}", response_model=schemas.BusinessOut, tags=["Businesses"])
+def update_business(business_id: int, data: schemas.BusinessCreate, current_user: models.User = Depends(require_admin), db: Session = Depends(get_db)):
+    biz = db.query(models.Business).filter(models.Business.id == business_id).first()
+    if not biz:
+        raise HTTPException(status_code=404, detail="Business not found")
+    biz.name = data.name
+    if data.industry: biz.industry = data.industry
+    if data.currency: biz.currency = data.currency
+    db.commit()
+    db.refresh(biz)
+    return biz
+
+@app.get("/businesses/{business_id}/members", response_model=list[schemas.BusinessMemberOut], tags=["Businesses"])
+def get_members(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_business_or_403(business_id, current_user, db)
+    return crud.get_members(db, business_id)
+
+@app.post("/businesses/{business_id}/members", tags=["Businesses"])
+def add_member(business_id: int, data: schemas.BusinessMemberAdd, current_user: models.User = Depends(require_admin), db: Session = Depends(get_db)):
+    return crud.add_member(db, business_id, data, added_by_id=current_user.id)
+
+@app.delete("/businesses/{business_id}/members/{user_id}", tags=["Businesses"])
+def remove_member(business_id: int, user_id: int, _: models.User = Depends(require_admin), db: Session = Depends(get_db)):
+    ok = crud.remove_member(db, business_id, user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return {"removed": user_id}
+
+
+# ── Admin — Users ─────────────────────────────────────────────────────────────
+@app.get("/admin/users", response_model=list[schemas.UserOut], tags=["Admin"])
+def list_users(_: models.User = Depends(require_admin), db: Session = Depends(get_db)):
+    return crud.get_users(db)
+
+@app.post("/admin/users", response_model=schemas.UserOut, status_code=201, tags=["Admin"])
+def create_user(user: schemas.UserCreate, current_user: models.User = Depends(require_admin), db: Session = Depends(get_db)):
+    from auth import get_user_by_email
+    if get_user_by_email(db, user.email):
+        raise HTTPException(status_code=409, detail="Email already registered")
+    return crud.create_user(db, user, created_by_id=current_user.id)
+
+@app.patch("/admin/users/{user_id}", response_model=schemas.UserOut, tags=["Admin"])
+def update_user(user_id: int, data: schemas.UserUpdate, current_user: models.User = Depends(require_admin), db: Session = Depends(get_db)):
+    user = crud.update_user(db, user_id, data, updated_by_id=current_user.id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
-
-# ── First-run admin setup (only works if no users exist) ─────────────────────
-@app.post("/setup", response_model=schemas.UserOut, status_code=201, tags=["Setup"])
-def first_run_setup(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    """
-    Creates the first admin account.
-    Only works when the users table is empty — disabled after first use.
-    """
-    if crud.count_users(db) > 0:
-        raise HTTPException(status_code=403, detail="Setup already complete. Use /users to manage accounts.")
-    user.role = "admin"  # Force admin role for first user
-    return crud.create_user(db, user)
+@app.post("/admin/users/{user_id}/reset-password", tags=["Admin"])
+def admin_reset_password(user_id: int, data: schemas.ChangePassword, current_user: models.User = Depends(require_admin), db: Session = Depends(get_db)):
+    ok = crud.reset_password(db, user_id, data.new_password, reset_by_id=current_user.id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"message": f"Password reset for user {user_id}"}
 
 
-# ── Sales ─────────────────────────────────────────────────────────────────────
-@app.get("/sales", response_model=list[schemas.SaleOut], tags=["Sales"])
-def get_sales(
-    skip: int = 0,
-    limit: int = 500,
-    current_user: models.User = Depends(require_employee),
-    db: Session = Depends(get_db)
-):
-    # Employees see only their own entries; managers/admins see all
-    sales = crud.get_sales(db, skip=skip, limit=limit)
-    if current_user.role == "employee":
-        sales = [s for s in sales if s.created_by_id == current_user.id]
-    return sales
+# ── Admin — Activity Log ──────────────────────────────────────────────────────
+@app.get("/admin/activity", response_model=list[schemas.ActivityLogOut], tags=["Admin"])
+def get_global_activity(_: models.User = Depends(require_admin), db: Session = Depends(get_db)):
+    return crud.get_activity_log(db, limit=200)
+
+@app.get("/businesses/{business_id}/activity", response_model=list[schemas.ActivityLogOut], tags=["Admin"])
+def get_business_activity(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_business_manager(business_id, current_user, db)
+    return crud.get_activity_log(db, business_id=business_id, limit=100)
 
 
-@app.post("/sales", response_model=schemas.SaleOut, status_code=201, tags=["Sales"])
-def create_sale(
-    sale: schemas.SaleCreate,
-    current_user: models.User = Depends(require_employee),
-    db: Session = Depends(get_db)
-):
-    return crud.create_sale(db, sale, created_by_id=current_user.id)
+# ── Sales (business-scoped) ───────────────────────────────────────────────────
+@app.get("/businesses/{business_id}/sales", response_model=list[schemas.SaleOut], tags=["Sales"])
+def get_sales(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_business_or_403(business_id, current_user, db)
+    return crud.get_sales(db, business_id)
 
+@app.post("/businesses/{business_id}/sales", response_model=schemas.SaleOut, status_code=201, tags=["Sales"])
+def create_sale(business_id: int, sale: schemas.SaleCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_business_or_403(business_id, current_user, db)
+    return crud.create_sale(db, sale, business_id=business_id, created_by_id=current_user.id)
 
-@app.delete("/sales/{sale_id}", tags=["Sales"])
-def delete_sale(
-    sale_id: int,
-    _: models.User = Depends(require_manager),
-    db: Session = Depends(get_db)
-):
-    if not crud.delete_sale(db, sale_id):
+@app.delete("/businesses/{business_id}/sales/{sale_id}", tags=["Sales"])
+def delete_sale(business_id: int, sale_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_business_manager(business_id, current_user, db)
+    if not crud.delete_sale(db, sale_id, business_id):
         raise HTTPException(status_code=404, detail="Sale not found")
     return {"deleted": sale_id}
 
 
-# ── Expenses ──────────────────────────────────────────────────────────────────
-@app.get("/expenses", response_model=list[schemas.ExpenseOut], tags=["Expenses"])
-def get_expenses(
-    skip: int = 0,
-    limit: int = 500,
-    current_user: models.User = Depends(require_employee),
-    db: Session = Depends(get_db)
-):
-    expenses = crud.get_expenses(db, skip=skip, limit=limit)
-    if current_user.role == "employee":
-        expenses = [e for e in expenses if e.created_by_id == current_user.id]
-    return expenses
+# ── Expenses (business-scoped) ────────────────────────────────────────────────
+@app.get("/businesses/{business_id}/expenses", response_model=list[schemas.ExpenseOut], tags=["Expenses"])
+def get_expenses(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_business_or_403(business_id, current_user, db)
+    return crud.get_expenses(db, business_id)
 
+@app.post("/businesses/{business_id}/expenses", response_model=schemas.ExpenseOut, status_code=201, tags=["Expenses"])
+def create_expense(business_id: int, expense: schemas.ExpenseCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_business_or_403(business_id, current_user, db)
+    return crud.create_expense(db, expense, business_id=business_id, created_by_id=current_user.id)
 
-@app.post("/expenses", response_model=schemas.ExpenseOut, status_code=201, tags=["Expenses"])
-def create_expense(
-    expense: schemas.ExpenseCreate,
-    current_user: models.User = Depends(require_employee),
-    db: Session = Depends(get_db)
-):
-    return crud.create_expense(db, expense, created_by_id=current_user.id)
-
-
-@app.delete("/expenses/{expense_id}", tags=["Expenses"])
-def delete_expense(
-    expense_id: int,
-    _: models.User = Depends(require_manager),
-    db: Session = Depends(get_db)
-):
-    if not crud.delete_expense(db, expense_id):
+@app.delete("/businesses/{business_id}/expenses/{expense_id}", tags=["Expenses"])
+def delete_expense(business_id: int, expense_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_business_manager(business_id, current_user, db)
+    if not crud.delete_expense(db, expense_id, business_id):
         raise HTTPException(status_code=404, detail="Expense not found")
     return {"deleted": expense_id}
 
 
-# ── Inventory ─────────────────────────────────────────────────────────────────
-@app.get("/inventory", response_model=list[schemas.InventoryOut], tags=["Inventory"])
-def get_inventory(
-    _: models.User = Depends(require_employee),
-    db: Session = Depends(get_db)
-):
-    return crud.get_inventory(db)
+# ── Inventory (business-scoped) ───────────────────────────────────────────────
+@app.get("/businesses/{business_id}/inventory", response_model=list[schemas.InventoryOut], tags=["Inventory"])
+def get_inventory(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_business_or_403(business_id, current_user, db)
+    return crud.get_inventory(db, business_id)
 
+@app.post("/businesses/{business_id}/inventory", response_model=schemas.InventoryOut, status_code=201, tags=["Inventory"])
+def create_product(business_id: int, product: schemas.InventoryCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_business_manager(business_id, current_user, db)
+    return crud.create_product(db, product, business_id=business_id)
 
-@app.post("/inventory", response_model=schemas.InventoryOut, status_code=201, tags=["Inventory"])
-def create_product(
-    product: schemas.InventoryCreate,
-    _: models.User = Depends(require_manager),
-    db: Session = Depends(get_db)
-):
-    return crud.create_product(db, product)
-
-
-@app.patch("/inventory/{sku}/stock", response_model=schemas.InventoryOut, tags=["Inventory"])
-def update_stock(
-    sku: str,
-    movement: schemas.StockMovement,
-    current_user: models.User = Depends(require_employee),
-    db: Session = Depends(get_db)
-):
-    item = crud.update_stock(db, sku, movement, created_by_id=current_user.id)
+@app.patch("/businesses/{business_id}/inventory/{sku}/stock", response_model=schemas.InventoryOut, tags=["Inventory"])
+def update_stock(business_id: int, sku: str, movement: schemas.StockMovement, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_business_or_403(business_id, current_user, db)
+    item = crud.update_stock(db, sku, business_id, movement, created_by_id=current_user.id)
     if not item:
         raise HTTPException(status_code=404, detail=f"SKU '{sku}' not found")
     return item
 
-
-@app.get("/inventory/{sku}/movements", response_model=list[schemas.StockMovementOut], tags=["Inventory"])
-def get_stock_movements(
-    sku: str,
-    _: models.User = Depends(require_manager),
-    db: Session = Depends(get_db)
-):
-    """Full audit log for a specific SKU — managers and admins only."""
-    return crud.get_stock_movements(db, sku=sku)
-
-
-@app.delete("/inventory/{sku}", tags=["Inventory"])
-def delete_product(
-    sku: str,
-    _: models.User = Depends(require_admin),
-    db: Session = Depends(get_db)
-):
-    if not crud.delete_product(db, sku):
+@app.delete("/businesses/{business_id}/inventory/{sku}", tags=["Inventory"])
+def delete_product(business_id: int, sku: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_business_manager(business_id, current_user, db)
+    if not crud.delete_product(db, sku, business_id):
         raise HTTPException(status_code=404, detail="Product not found")
     return {"deleted": sku}
 
 
-# ── Summary ───────────────────────────────────────────────────────────────────
-@app.get("/summary", response_model=schemas.SummaryOut, tags=["Summary"])
-def get_summary(
-    _: models.User = Depends(require_manager),
-    db: Session = Depends(get_db)
-):
-    """Dashboard KPIs — managers and admins only."""
-    return crud.get_summary(db)
+# ── Summary (business-scoped) ─────────────────────────────────────────────────
+@app.get("/businesses/{business_id}/summary", response_model=schemas.SummaryOut, tags=["Summary"])
+def get_summary(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_business_manager(business_id, current_user, db)
+    return crud.get_summary(db, business_id)

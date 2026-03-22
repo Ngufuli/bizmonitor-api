@@ -3,7 +3,7 @@ schemas.py — Pydantic request/response models
 """
 
 from pydantic import BaseModel, Field, EmailStr, validator
-from typing import Optional
+from typing import Optional, List
 from datetime import date, datetime
 from models import UserRole
 
@@ -24,25 +24,51 @@ class TokenData(BaseModel):
     user_id: Optional[int] = None
 
 
+# ── Business ──────────────────────────────────────────────────────────────────
+class BusinessCreate(BaseModel):
+    name:     str = Field(..., min_length=1, max_length=200)
+    industry: Optional[str] = None
+    currency: str = "USD"
+
+class BusinessOut(BaseModel):
+    id:         int
+    name:       str
+    industry:   Optional[str]
+    currency:   str
+    is_active:  bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class BusinessMemberAdd(BaseModel):
+    user_id: int
+    role:    UserRole = UserRole.employee
+
+class BusinessMemberOut(BaseModel):
+    id:          int
+    user_id:     int
+    business_id: int
+    role:        UserRole
+    user:        Optional["UserOut"] = None
+
+    class Config:
+        from_attributes = True
+
+
 # ── Users ─────────────────────────────────────────────────────────────────────
 class UserCreate(BaseModel):
-    email:      EmailStr
-    full_name:  str = Field(..., min_length=2, max_length=200)
-    password:   str = Field(..., min_length=8)
-    role:       UserRole = UserRole.employee
-    department: Optional[str] = None
-
-    @validator("password")
-    def strong_password(cls, v):
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        return v
+    email:       EmailStr
+    full_name:   str = Field(..., min_length=2, max_length=200)
+    password:    str = Field(..., min_length=8)
+    role:        UserRole = UserRole.employee
+    department:  Optional[str] = None
 
 class UserUpdate(BaseModel):
-    full_name:  Optional[str] = None
+    full_name:  Optional[str]      = None
     role:       Optional[UserRole] = None
-    department: Optional[str] = None
-    is_active:  Optional[bool] = None
+    department: Optional[str]      = None
+    is_active:  Optional[bool]     = None
 
 class UserOut(BaseModel):
     id:         int
@@ -57,24 +83,26 @@ class UserOut(BaseModel):
         from_attributes = True
 
 class ChangePassword(BaseModel):
-    current_password: str
-    new_password:     str = Field(..., min_length=8)
+    user_id:      Optional[int] = None   # admin resetting another user's password
+    new_password: str = Field(..., min_length=8)
+    current_password: Optional[str] = None  # required when changing own password
 
 
 # ── Sales ─────────────────────────────────────────────────────────────────────
 class SaleCreate(BaseModel):
     date:    date
-    product: str = Field(..., min_length=1, max_length=200)
+    product: str   = Field(..., min_length=1, max_length=200)
     amount:  float = Field(..., gt=0)
     units:   int   = Field(..., gt=0)
     rep:     Optional[str] = None
     notes:   Optional[str] = None
 
 class SaleOut(SaleCreate):
-    id:         int
-    month:      str
+    id:            int
+    month:         str
+    business_id:   int
     created_by_id: Optional[int]
-    created_at: datetime
+    created_at:    datetime
 
     class Config:
         from_attributes = True
@@ -98,6 +126,7 @@ class ExpenseCreate(BaseModel):
 class ExpenseOut(ExpenseCreate):
     id:            int
     month:         str
+    business_id:   int
     created_by_id: Optional[int]
     created_at:    datetime
 
@@ -109,14 +138,15 @@ class ExpenseOut(ExpenseCreate):
 class InventoryCreate(BaseModel):
     sku:       str   = Field(..., min_length=1, max_length=50)
     name:      str   = Field(..., min_length=1, max_length=200)
-    stock:     int   = Field(0, ge=0)
-    reorder:   int   = Field(50, ge=0)
+    stock:     int   = Field(0,   ge=0)
+    reorder:   int   = Field(50,  ge=0)
     unit_cost: float = Field(0.0, ge=0)
 
 class InventoryOut(InventoryCreate):
-    id:         int
-    status:     str
-    updated_at: datetime
+    id:          int
+    business_id: int
+    status:      str
+    updated_at:  datetime
 
     class Config:
         from_attributes = True
@@ -148,18 +178,32 @@ class StockMovementOut(BaseModel):
         from_attributes = True
 
 
+# ── Activity Log ──────────────────────────────────────────────────────────────
+class ActivityLogOut(BaseModel):
+    id:          int
+    business_id: Optional[int]
+    user_id:     Optional[int]
+    action:      str
+    detail:      Optional[str]
+    created_at:  datetime
+
+    class Config:
+        from_attributes = True
+
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 class SummaryOut(BaseModel):
-    total_revenue:        float
-    total_expenses:       float
-    net_profit:           float
-    profit_margin:        float
-    inventory_value:      float
-    low_stock_count:      int
-    out_of_stock_count:   int
-    total_sales_entries:  int
+    total_revenue:         float
+    total_expenses:        float
+    net_profit:            float
+    profit_margin:         float
+    inventory_value:       float
+    low_stock_count:       int
+    out_of_stock_count:    int
+    total_sales_entries:   int
     total_expense_entries: int
 
 
-# Fix forward reference
+# Fix forward refs
 Token.model_rebuild()
+BusinessMemberOut.model_rebuild()
