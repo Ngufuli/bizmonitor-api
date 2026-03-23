@@ -262,6 +262,51 @@ def delete_product(db: Session, sku: str, business_id: int) -> bool:
     return True
 
 
+# ── Cash Balances ─────────────────────────────────────────────────────────────
+def get_cash_balances(db: Session, business_id: int, limit: int = 90):
+    return db.query(models.CashBalance).filter(
+        models.CashBalance.business_id == business_id
+    ).order_by(models.CashBalance.date.desc()).limit(limit).all()
+
+def get_cash_balance_by_date(db: Session, business_id: int, date):
+    return db.query(models.CashBalance).filter(
+        models.CashBalance.business_id == business_id,
+        models.CashBalance.date == date,
+    ).first()
+
+def upsert_cash_balance(db: Session, data: schemas.CashBalanceCreate, business_id: int, recorded_by_id: int = None):
+    existing = get_cash_balance_by_date(db, business_id, data.date)
+    if existing:
+        existing.opening_balance = data.opening_balance
+        existing.closing_balance = data.closing_balance
+        existing.notes           = data.notes
+        db.commit()
+        db.refresh(existing)
+        log_activity(db, "updated_cash_balance", f"Updated balance for {data.date}: open={data.opening_balance} close={data.closing_balance}", user_id=recorded_by_id, business_id=business_id)
+        db.commit()
+        return existing
+    record = models.CashBalance(
+        business_id=business_id, date=data.date,
+        opening_balance=data.opening_balance, closing_balance=data.closing_balance,
+        notes=data.notes, recorded_by_id=recorded_by_id,
+    )
+    db.add(record)
+    log_activity(db, "recorded_cash_balance", f"Recorded balance for {data.date}: open={data.opening_balance} close={data.closing_balance}", user_id=recorded_by_id, business_id=business_id)
+    db.commit()
+    db.refresh(record)
+    return record
+
+def delete_cash_balance(db: Session, balance_id: int, business_id: int) -> bool:
+    obj = db.query(models.CashBalance).filter(
+        models.CashBalance.id == balance_id,
+        models.CashBalance.business_id == business_id,
+    ).first()
+    if not obj: return False
+    db.delete(obj)
+    db.commit()
+    return True
+
+
 # ── Activity Log ──────────────────────────────────────────────────────────────
 def get_activity_log(db: Session, business_id: int = None, limit: int = 100):
     q = db.query(models.ActivityLog).order_by(models.ActivityLog.created_at.desc())

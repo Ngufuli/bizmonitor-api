@@ -178,6 +178,29 @@ class StockMovementOut(BaseModel):
         from_attributes = True
 
 
+# ── Cash Balances ─────────────────────────────────────────────────────────────
+class CashBalanceCreate(BaseModel):
+    date:            date
+    opening_balance: float = Field(..., ge=0)
+    closing_balance: float = Field(..., ge=0)
+    notes:           Optional[str] = None
+
+class CashBalanceOut(CashBalanceCreate):
+    id:             int
+    business_id:    int
+    recorded_by_id: Optional[int]
+    created_at:     datetime
+    updated_at:     datetime
+
+    class Config:
+        from_attributes = True
+
+class CashBalanceUpdate(BaseModel):
+    opening_balance: Optional[float] = Field(None, ge=0)
+    closing_balance: Optional[float] = Field(None, ge=0)
+    notes:           Optional[str]   = None
+
+
 # ── Activity Log ──────────────────────────────────────────────────────────────
 class ActivityLogOut(BaseModel):
     id:          int

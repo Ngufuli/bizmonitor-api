@@ -245,6 +245,25 @@ def delete_product(business_id: int, sku: str, current_user: models.User = Depen
     return {"deleted": sku}
 
 
+# ── Cash Balances (business-scoped) ──────────────────────────────────────────
+@app.get("/businesses/{business_id}/cash", response_model=list[schemas.CashBalanceOut], tags=["Cash"])
+def get_cash_balances(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_business_or_403(business_id, current_user, db)
+    return crud.get_cash_balances(db, business_id)
+
+@app.post("/businesses/{business_id}/cash", response_model=schemas.CashBalanceOut, status_code=201, tags=["Cash"])
+def record_cash_balance(business_id: int, data: schemas.CashBalanceCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_business_or_403(business_id, current_user, db)
+    return crud.upsert_cash_balance(db, data, business_id=business_id, recorded_by_id=current_user.id)
+
+@app.delete("/businesses/{business_id}/cash/{balance_id}", tags=["Cash"])
+def delete_cash_balance(business_id: int, balance_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_business_manager(business_id, current_user, db)
+    if not crud.delete_cash_balance(db, balance_id, business_id):
+        raise HTTPException(status_code=404, detail="Balance record not found")
+    return {"deleted": balance_id}
+
+
 # ── Summary (business-scoped) ─────────────────────────────────────────────────
 @app.get("/businesses/{business_id}/summary", response_model=schemas.SummaryOut, tags=["Summary"])
 def get_summary(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):

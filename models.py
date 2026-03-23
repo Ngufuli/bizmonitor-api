@@ -142,6 +142,23 @@ class StockMovementLog(Base):
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
 
 
+# ── Cash Balances ─────────────────────────────────────────────────────────────
+class CashBalance(Base):
+    __tablename__ = "cash_balances"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    business_id     = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
+    date            = Column(Date,    nullable=False, index=True)
+    opening_balance = Column(Float,   nullable=False, default=0.0)
+    closing_balance = Column(Float,   nullable=False, default=0.0)
+    notes           = Column(Text,    nullable=True)
+    recorded_by_id  = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at      = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at      = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+    business = relationship("Business", foreign_keys=[business_id])
+
+
 # ── Activity Log ──────────────────────────────────────────────────────────────
 class ActivityLog(Base):
     __tablename__ = "activity_logs"
