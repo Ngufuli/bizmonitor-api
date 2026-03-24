@@ -245,6 +245,12 @@ def delete_product(business_id: int, sku: str, current_user: models.User = Depen
     return {"deleted": sku}
 
 
+@app.get("/businesses/{business_id}/stock-movements", response_model=list[schemas.StockMovementOut], tags=["Inventory"])
+def get_stock_movements(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_business_or_403(business_id, current_user, db)
+    return crud.get_stock_movements(db, business_id)
+
+
 # ── Cash Balances (business-scoped) ──────────────────────────────────────────
 @app.get("/businesses/{business_id}/cash", response_model=list[schemas.CashBalanceOut], tags=["Cash"])
 def get_cash_balances(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):

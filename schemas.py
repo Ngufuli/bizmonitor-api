@@ -90,12 +90,15 @@ class ChangePassword(BaseModel):
 
 # ── Sales ─────────────────────────────────────────────────────────────────────
 class SaleCreate(BaseModel):
-    date:    date
-    product: str   = Field(..., min_length=1, max_length=200)
-    amount:  float = Field(..., gt=0)
-    units:   int   = Field(..., gt=0)
-    rep:     Optional[str] = None
-    notes:   Optional[str] = None
+    date:       date
+    sku:        Optional[str] = None        # inventory SKU if linked
+    product:    str   = Field(..., min_length=1, max_length=200)
+    unit_price: Optional[float] = Field(None, gt=0)
+    unit_cost:  Optional[float] = Field(None, ge=0)
+    amount:     float = Field(..., gt=0)    # total revenue (unit_price × units)
+    units:      int   = Field(..., gt=0)
+    rep:        Optional[str] = None
+    notes:      Optional[str] = None
 
 class SaleOut(SaleCreate):
     id:            int
@@ -217,6 +220,9 @@ class ActivityLogOut(BaseModel):
 # ── Summary ───────────────────────────────────────────────────────────────────
 class SummaryOut(BaseModel):
     total_revenue:         float
+    total_cogs:            float
+    gross_profit:          float
+    gross_margin:          float
     total_expenses:        float
     net_profit:            float
     profit_margin:         float

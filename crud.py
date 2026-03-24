@@ -163,13 +163,38 @@ def get_sales(db: Session, business_id: int, skip: int = 0, limit: int = 500):
     ).order_by(models.Sale.date.desc()).offset(skip).limit(limit).all()
 
 def create_sale(db: Session, sale: schemas.SaleCreate, business_id: int, created_by_id: int = None):
+    # If linked to inventory, fetch unit_cost and auto-deduct stock
+    unit_cost = sale.unit_cost or 0.0
+    if sale.sku:
+        item = db.query(models.InventoryItem).filter(
+            models.InventoryItem.sku == sale.sku.upper(),
+            models.InventoryItem.business_id == business_id,
+        ).first()
+        if item:
+            unit_cost = item.unit_cost
+            # Auto-deduct stock
+            stock_before = item.stock
+            stock_after  = max(0, item.stock - sale.units)
+            movement = models.StockMovementLog(
+                business_id=business_id, sku=item.sku,
+                movement_type="remove", qty=sale.units,
+                stock_before=stock_before, stock_after=stock_after,
+                reason=f"Sale on {sale.date}", received_by=sale.rep,
+                created_by_id=created_by_id,
+            )
+            db.add(movement)
+            item.stock  = stock_after
+            item.status = compute_status(stock_after, item.reorder)
+
     db_sale = models.Sale(
         business_id=business_id, date=sale.date, month=month_str(sale.date),
-        product=sale.product, amount=sale.amount, units=sale.units,
+        sku=sale.sku.upper() if sale.sku else None,
+        product=sale.product, unit_price=sale.unit_price,
+        unit_cost=unit_cost, amount=sale.amount, units=sale.units,
         rep=sale.rep, notes=sale.notes, created_by_id=created_by_id,
     )
     db.add(db_sale)
-    log_activity(db, "created_sale", f"Logged sale: {sale.product} ${sale.amount}", user_id=created_by_id, business_id=business_id)
+    log_activity(db, "created_sale", f"Sold {sale.units}x {sale.product} @ {sale.amount}", user_id=created_by_id, business_id=business_id)
     db.commit()
     db.refresh(db_sale)
     return db_sale
@@ -315,22 +340,34 @@ def get_activity_log(db: Session, business_id: int = None, limit: int = 100):
     return q.limit(limit).all()
 
 
+def get_stock_movements(db: Session, business_id: int, limit: int = 500):
+    return db.query(models.StockMovementLog).filter(
+        models.StockMovementLog.business_id == business_id
+    ).order_by(models.StockMovementLog.created_at.desc()).limit(limit).all()
+
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 def get_summary(db: Session, business_id: int) -> dict:
-    total_revenue  = db.query(func.sum(models.Sale.amount)).filter(models.Sale.business_id == business_id).scalar() or 0
+    sales          = get_sales(db, business_id, limit=10000)
+    total_revenue  = sum(s.amount for s in sales)
+    total_cogs     = sum((s.unit_cost or 0) * s.units for s in sales)
+    gross_profit   = total_revenue - total_cogs
     total_expenses = db.query(func.sum(models.Expense.amount)).filter(models.Expense.business_id == business_id).scalar() or 0
+    net_profit     = gross_profit - total_expenses
     inventory      = get_inventory(db, business_id)
     inv_value      = sum(i.stock * i.unit_cost for i in inventory)
-    net            = total_revenue - total_expenses
 
     return {
         "total_revenue":         round(total_revenue,  2),
+        "total_cogs":            round(total_cogs,     2),
+        "gross_profit":          round(gross_profit,   2),
+        "gross_margin":          round(gross_profit / total_revenue * 100, 1) if total_revenue else 0,
         "total_expenses":        round(total_expenses, 2),
-        "net_profit":            round(net,            2),
-        "profit_margin":         round(net / total_revenue * 100, 1) if total_revenue else 0,
+        "net_profit":            round(net_profit,     2),
+        "profit_margin":         round(net_profit / total_revenue * 100, 1) if total_revenue else 0,
         "inventory_value":       round(inv_value, 2),
         "low_stock_count":       sum(1 for i in inventory if i.status == "low"),
         "out_of_stock_count":    sum(1 for i in inventory if i.status == "out"),
-        "total_sales_entries":   db.query(func.count(models.Sale.id)).filter(models.Sale.business_id == business_id).scalar(),
+        "total_sales_entries":   len(sales),
         "total_expense_entries": db.query(func.count(models.Expense.id)).filter(models.Expense.business_id == business_id).scalar(),
     }

@@ -76,8 +76,11 @@ class Sale(Base):
     business_id   = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
     date          = Column(Date,    nullable=False, index=True)
     month         = Column(String(10), nullable=False)
+    sku           = Column(String(50),  nullable=True, index=True)   # linked inventory item
     product       = Column(String(200), nullable=False)
-    amount        = Column(Float,   nullable=False)
+    unit_price    = Column(Float,   nullable=True)   # selling price per unit
+    unit_cost     = Column(Float,   nullable=True, default=0.0)  # cost price at time of sale
+    amount        = Column(Float,   nullable=False)  # total = unit_price × units
     units         = Column(Integer, nullable=False)
     rep           = Column(String(100), nullable=True)
     notes         = Column(Text,    nullable=True)
