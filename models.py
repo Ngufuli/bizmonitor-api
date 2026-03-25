@@ -1,12 +1,12 @@
 """
-models.py — All database tables including Business support
+models.py — All database tables
 """
 
 from sqlalchemy import (
     Column, Integer, String, Float, Date, DateTime,
-    Text, Boolean, ForeignKey, Enum as SAEnum
+    Text, Boolean, ForeignKey, Enum as SAEnum, Numeric
 )
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 from sqlalchemy.orm import relationship
 from database import Base
 import enum
@@ -21,13 +21,12 @@ class UserRole(str, enum.Enum):
 # ── Business ──────────────────────────────────────────────────────────────────
 class Business(Base):
     __tablename__ = "businesses"
-
-    id          = Column(Integer, primary_key=True, index=True)
-    name        = Column(String(200), nullable=False)
-    industry    = Column(String(100), nullable=True)
-    currency    = Column(String(10),  nullable=False, default="USD")
-    is_active   = Column(Boolean, default=True)
-    created_at  = Column(DateTime(timezone=True), server_default=func.now())
+    id         = Column(Integer, primary_key=True, index=True)
+    name       = Column(String(200), nullable=False)
+    industry   = Column(String(100), nullable=True)
+    currency   = Column(String(10),  nullable=False, default="USD")
+    is_active  = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     members   = relationship("BusinessMember", back_populates="business")
     sales     = relationship("Sale",           back_populates="business")
@@ -35,10 +34,9 @@ class Business(Base):
     inventory = relationship("InventoryItem",  back_populates="business")
 
 
-# ── BusinessMember — links users to businesses with a role ────────────────────
+# ── BusinessMember ────────────────────────────────────────────────────────────
 class BusinessMember(Base):
     __tablename__ = "business_members"
-
     id          = Column(Integer, primary_key=True, index=True)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
     user_id     = Column(Integer, ForeignKey("users.id"),      nullable=False)
@@ -52,7 +50,6 @@ class BusinessMember(Base):
 # ── Users ─────────────────────────────────────────────────────────────────────
 class User(Base):
     __tablename__ = "users"
-
     id              = Column(Integer, primary_key=True, index=True)
     email           = Column(String(255), unique=True, nullable=False, index=True)
     full_name       = Column(String(200), nullable=False)
@@ -71,19 +68,19 @@ class User(Base):
 # ── Sales ─────────────────────────────────────────────────────────────────────
 class Sale(Base):
     __tablename__ = "sales"
-
     id            = Column(Integer, primary_key=True, index=True)
     business_id   = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
     date          = Column(Date,    nullable=False, index=True)
     month         = Column(String(10), nullable=False)
-    sku           = Column(String(50),  nullable=True, index=True)   # linked inventory item
     product       = Column(String(200), nullable=False)
-    unit_price    = Column(Float,   nullable=True)   # selling price per unit
-    unit_cost     = Column(Float,   nullable=True, default=0.0)  # cost price at time of sale
-    amount        = Column(Float,   nullable=False)  # total = unit_price × units
+    amount        = Column(Float, nullable=False)
     units         = Column(Integer, nullable=False)
     rep           = Column(String(100), nullable=True)
     notes         = Column(Text,    nullable=True)
+    # These columns added via migration — nullable so existing rows work
+    sku           = Column(String(50),  nullable=True)
+    unit_price    = Column(Float,       nullable=True)
+    unit_cost     = Column(Float,       nullable=True, server_default=text("0"))
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -94,7 +91,6 @@ class Sale(Base):
 # ── Expenses ──────────────────────────────────────────────────────────────────
 class Expense(Base):
     __tablename__ = "expenses"
-
     id            = Column(Integer, primary_key=True, index=True)
     business_id   = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
     date          = Column(Date,    nullable=False, index=True)
@@ -114,7 +110,6 @@ class Expense(Base):
 # ── Inventory ─────────────────────────────────────────────────────────────────
 class InventoryItem(Base):
     __tablename__ = "inventory"
-
     id          = Column(Integer, primary_key=True, index=True)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
     sku         = Column(String(50),  nullable=False, index=True)
@@ -131,7 +126,6 @@ class InventoryItem(Base):
 # ── Stock Movement Audit Log ──────────────────────────────────────────────────
 class StockMovementLog(Base):
     __tablename__ = "stock_movements"
-
     id            = Column(Integer, primary_key=True, index=True)
     business_id   = Column(Integer, ForeignKey("businesses.id"), nullable=False)
     sku           = Column(String(50), nullable=False, index=True)
@@ -148,7 +142,6 @@ class StockMovementLog(Base):
 # ── Cash Balances ─────────────────────────────────────────────────────────────
 class CashBalance(Base):
     __tablename__ = "cash_balances"
-
     id              = Column(Integer, primary_key=True, index=True)
     business_id     = Column(Integer, ForeignKey("businesses.id"), nullable=False, index=True)
     date            = Column(Date,    nullable=False, index=True)
@@ -165,10 +158,9 @@ class CashBalance(Base):
 # ── Activity Log ──────────────────────────────────────────────────────────────
 class ActivityLog(Base):
     __tablename__ = "activity_logs"
-
     id          = Column(Integer, primary_key=True, index=True)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=True)
     user_id     = Column(Integer, ForeignKey("users.id"),      nullable=True)
-    action      = Column(String(100), nullable=False)   # e.g. "created_sale", "updated_user"
-    detail      = Column(Text,        nullable=True)    # human-readable description
+    action      = Column(String(100), nullable=False)
+    detail      = Column(Text,        nullable=True)
     created_at  = Column(DateTime(timezone=True), server_default=func.now())
