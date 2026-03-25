@@ -27,10 +27,17 @@ app = FastAPI(
     description="BizMonitor — Multi-business, JWT auth, Admin panel",
 )
 
+# Parse allowed origins — handle wildcard and trim whitespace
+_raw_origins = settings.ALLOWED_ORIGINS.strip()
+if _raw_origins == "*":
+    _allow_origins = ["*"]
+else:
+    _allow_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS.split(","),
-    allow_credentials=True,
+    allow_origins=_allow_origins,
+    allow_credentials=True if _allow_origins != ["*"] else False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

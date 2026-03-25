@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours
 
     # CORS — set to your frontend URL in production
-    ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    # CORS — comma-separated list of allowed frontend URLs
+    # In production set this to your exact Vercel URL
+    ALLOWED_ORIGINS: str = "*"
 
     # App
     APP_NAME: str = "BizMonitor API"
