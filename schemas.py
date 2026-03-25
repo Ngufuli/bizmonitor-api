@@ -163,8 +163,9 @@ class InventoryOut(InventoryCreate):
 class StockMovement(BaseModel):
     movement_type: str = Field(..., description="add | remove | adjust")
     qty:           int = Field(..., gt=0)
-    reason:        Optional[str] = None
-    received_by:   Optional[str] = None
+    reason:        Optional[str]   = None
+    received_by:   Optional[str]   = None
+    new_unit_cost: Optional[float] = None   # optionally update unit cost when receiving stock
 
     @validator("movement_type")
     def valid_type(cls, v):

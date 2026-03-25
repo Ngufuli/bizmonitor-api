@@ -282,7 +282,13 @@ def update_stock(db: Session, sku: str, business_id: int, movement: schemas.Stoc
         reason=movement.reason, received_by=movement.received_by, created_by_id=created_by_id,
     )
     db.add(log)
-    log_activity(db, "updated_stock", f"Stock {sku}: {stock_before}→{stock_after} ({movement.movement_type})", user_id=created_by_id, business_id=business_id)
+
+    detail = f"Stock {sku}: {stock_before}→{stock_after} ({movement.movement_type})"
+    if movement.new_unit_cost is not None:
+        item.unit_cost = movement.new_unit_cost
+        detail += f" · cost updated to {movement.new_unit_cost}"
+
+    log_activity(db, "updated_stock", detail, user_id=created_by_id, business_id=business_id)
 
     item.stock  = stock_after
     item.status = compute_status(stock_after, item.reorder)
