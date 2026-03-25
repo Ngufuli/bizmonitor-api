@@ -121,13 +121,14 @@ def list_all_businesses(_: models.User = Depends(require_admin), db: Session = D
     return crud.get_all_businesses(db)
 
 @app.patch("/businesses/{business_id}", response_model=schemas.BusinessOut, tags=["Businesses"])
-def update_business(business_id: int, data: schemas.BusinessCreate, current_user: models.User = Depends(require_admin), db: Session = Depends(get_db)):
+def update_business(business_id: int, data: schemas.BusinessUpdate, current_user: models.User = Depends(require_admin), db: Session = Depends(get_db)):
     biz = db.query(models.Business).filter(models.Business.id == business_id).first()
     if not biz:
         raise HTTPException(status_code=404, detail="Business not found")
-    biz.name = data.name
-    if data.industry: biz.industry = data.industry
-    if data.currency: biz.currency = data.currency
+    if data.name      is not None: biz.name      = data.name
+    if data.industry  is not None: biz.industry  = data.industry
+    if data.currency  is not None: biz.currency  = data.currency
+    if data.is_active is not None: biz.is_active = data.is_active
     db.commit()
     db.refresh(biz)
     return biz

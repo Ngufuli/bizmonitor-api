@@ -30,6 +30,12 @@ class BusinessCreate(BaseModel):
     industry: Optional[str] = None
     currency: str = "USD"
 
+class BusinessUpdate(BaseModel):
+    name:      Optional[str]  = None
+    industry:  Optional[str]  = None
+    currency:  Optional[str]  = None
+    is_active: Optional[bool] = None
+
 class BusinessOut(BaseModel):
     id:         int
     name:       str
