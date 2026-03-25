@@ -11,7 +11,7 @@ services:
       - key: SECRET_KEY
         generateValue: true      # Render auto-generates a secure random value
       - key: ALLOWED_ORIGINS
-        value: https://your-frontend.vercel.app
+        value: https://bizmonitor-frontend.vercel.app
       - key: DEBUG
         value: false
 
