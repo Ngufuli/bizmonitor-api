@@ -147,6 +147,7 @@ class CashBalance(Base):
     date            = Column(Date,    nullable=False, index=True)
     opening_balance = Column(Float,   nullable=False, default=0.0)
     closing_balance = Column(Float,   nullable=False, default=0.0)
+    bank_balance    = Column(Float,   nullable=True,  default=0.0)
     notes           = Column(Text,    nullable=True)
     recorded_by_id  = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at      = Column(DateTime(timezone=True), server_default=func.now())

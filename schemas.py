@@ -193,6 +193,7 @@ class CashBalanceCreate(BaseModel):
     date:            date
     opening_balance: float = Field(..., ge=0)
     closing_balance: float = Field(..., ge=0)
+    bank_balance:    Optional[float] = Field(None, ge=0)
     notes:           Optional[str] = None
 
 class CashBalanceOut(CashBalanceCreate):
@@ -208,6 +209,7 @@ class CashBalanceOut(CashBalanceCreate):
 class CashBalanceUpdate(BaseModel):
     opening_balance: Optional[float] = Field(None, ge=0)
     closing_balance: Optional[float] = Field(None, ge=0)
+    bank_balance:    Optional[float] = Field(None, ge=0)
     notes:           Optional[str]   = None
 
 

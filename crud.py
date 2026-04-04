@@ -329,13 +329,16 @@ def upsert_cash_balance(db: Session, data: schemas.CashBalanceCreate, business_i
     if existing:
         existing.opening_balance = data.opening_balance
         existing.closing_balance = data.closing_balance
-        existing.notes           = data.notes
+        if data.bank_balance is not None:
+            existing.bank_balance = data.bank_balance
+        existing.notes = data.notes
         db.commit()
         db.refresh(existing)
         return existing
     record = models.CashBalance(
         business_id=business_id, date=data.date,
         opening_balance=data.opening_balance, closing_balance=data.closing_balance,
+        bank_balance=data.bank_balance or 0.0,
         notes=data.notes, recorded_by_id=recorded_by_id,
     )
     db.add(record)
