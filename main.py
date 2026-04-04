@@ -281,5 +281,5 @@ def delete_cash_balance(business_id: int, balance_id: int, current_user: models.
 # ── Summary (business-scoped) ─────────────────────────────────────────────────
 @app.get("/businesses/{business_id}/summary", response_model=schemas.SummaryOut, tags=["Summary"])
 def get_summary(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    require_business_manager(business_id, current_user, db)
+    get_business_or_403(business_id, current_user, db)   # employees allowed
     return crud.get_summary(db, business_id)
