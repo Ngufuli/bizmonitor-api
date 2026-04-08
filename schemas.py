@@ -144,17 +144,7 @@ class ExpenseOut(ExpenseCreate):
 
 
 # ── Inventory ─────────────────────────────────────────────────────────────────
-class InventoryPriceUpdate(BaseModel):
-    unit_cost:  float = Field(..., ge=0)
-    reorder:    Optional[int]   = Field(None, ge=0)
-    name:       Optional[str]   = None
-
-class BulkPriceItem(BaseModel):
-    sku:       str
-    unit_cost: float = Field(..., ge=0)
-
-class BulkPriceUpdate(BaseModel):
-    items: list[BulkPriceItem]
+class InventoryCreate(BaseModel):
     sku:       str   = Field(..., min_length=1, max_length=50)
     name:      str   = Field(..., min_length=1, max_length=200)
     stock:     int   = Field(0,   ge=0)
@@ -169,6 +159,18 @@ class InventoryOut(InventoryCreate):
 
     class Config:
         from_attributes = True
+
+class InventoryPriceUpdate(BaseModel):
+    unit_cost:  float = Field(..., ge=0)
+    reorder:    Optional[int]   = Field(None, ge=0)
+    name:       Optional[str]   = None
+
+class BulkPriceItem(BaseModel):
+    sku:       str
+    unit_cost: float = Field(..., ge=0)
+
+class BulkPriceUpdate(BaseModel):
+    items: list[BulkPriceItem]
 
 class StockMovement(BaseModel):
     movement_type: str = Field(..., description="add | remove | adjust")
