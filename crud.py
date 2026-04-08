@@ -284,9 +284,19 @@ def update_stock(db: Session, sku: str, business_id: int, movement: schemas.Stoc
     db.add(log)
 
     detail = f"Stock {sku}: {stock_before}→{stock_after} ({movement.movement_type})"
-    if movement.new_unit_cost is not None:
-        item.unit_cost = movement.new_unit_cost
-        detail += f" · cost updated to {movement.new_unit_cost}"
+
+    if movement.new_unit_cost is not None and movement.movement_type == "add":
+        # Weighted average cost = (existing value + new value) / total units
+        existing_value = item.stock * item.unit_cost
+        new_value      = movement.qty * movement.new_unit_cost
+        total_units    = item.stock + movement.qty
+        if total_units > 0:
+            weighted_avg   = round((existing_value + new_value) / total_units, 4)
+            old_cost       = item.unit_cost
+            item.unit_cost = weighted_avg
+            detail += f" · WAC: ({stock_before}×{old_cost} + {movement.qty}×{movement.new_unit_cost}) ÷ {total_units} = {weighted_avg}"
+        else:
+            item.unit_cost = movement.new_unit_cost
 
     log_activity(db, "updated_stock", detail, user_id=created_by_id, business_id=business_id)
 

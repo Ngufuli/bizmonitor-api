@@ -237,6 +237,42 @@ def create_product(business_id: int, product: schemas.InventoryCreate, current_u
     require_business_manager(business_id, current_user, db)
     return crud.create_product(db, product, business_id=business_id)
 
+@app.patch("/businesses/{business_id}/inventory/{sku}/price", response_model=schemas.InventoryOut, tags=["Inventory"])
+def update_inventory_price(business_id: int, sku: str, data: schemas.InventoryPriceUpdate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_business_manager(business_id, current_user, db)
+    item = db.query(models.InventoryItem).filter(
+        models.InventoryItem.sku == sku.upper(),
+        models.InventoryItem.business_id == business_id,
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail=f"SKU '{sku}' not found")
+    item.unit_cost = data.unit_cost
+    if data.reorder is not None: item.reorder = data.reorder
+    if data.name    is not None: item.name    = data.name
+    log_activity(db, "updated_price", f"{sku}: cost→{data.unit_cost}", user_id=current_user.id, business_id=business_id)
+    db.commit()
+    db.refresh(item)
+    return item
+
+@app.patch("/businesses/{business_id}/inventory/bulk-price", tags=["Inventory"])
+def bulk_update_prices(business_id: int, data: schemas.BulkPriceUpdate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_business_manager(business_id, current_user, db)
+    updated = []
+    skipped = []
+    for entry in data.items:
+        item = db.query(models.InventoryItem).filter(
+            models.InventoryItem.sku == entry.sku.upper(),
+            models.InventoryItem.business_id == business_id,
+        ).first()
+        if item:
+            item.unit_cost = entry.unit_cost
+            updated.append(entry.sku.upper())
+        else:
+            skipped.append(entry.sku.upper())
+    log_activity(db, "bulk_price_update", f"Updated {len(updated)} SKUs: {', '.join(updated)}", user_id=current_user.id, business_id=business_id)
+    db.commit()
+    return {"updated": updated, "skipped": skipped, "count": len(updated)}
+
 @app.patch("/businesses/{business_id}/inventory/{sku}/stock", response_model=schemas.InventoryOut, tags=["Inventory"])
 def update_stock(business_id: int, sku: str, movement: schemas.StockMovement, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     get_business_or_403(business_id, current_user, db)
