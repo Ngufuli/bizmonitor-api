@@ -18,14 +18,20 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours
 
     # CORS — set to your frontend URL in production
-    # CORS — comma-separated list of allowed frontend URLs
-    # In production set this to your exact Vercel URL
     ALLOWED_ORIGINS: str = "*"
 
     # App
     APP_NAME: str = "BizMonitor API"
     APP_VERSION: str = "2.0.0"
     DEBUG: bool = False
+
+    # Frontend URL — used in notification deep links
+    FRONTEND_URL: str = "https://bizmonitor-frontend.vercel.app"
+
+    # OneSignal — push notifications
+    # Get these from onesignal.com → your app → Settings → Keys & IDs
+    ONESIGNAL_APP_ID:  str = ""   # e.g. "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    ONESIGNAL_API_KEY: str = ""   # REST API Key (not the App Key)
 
     class Config:
         env_file = ".env"

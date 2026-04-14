@@ -17,6 +17,7 @@ from auth import (
     verify_password, require_employee, require_manager, require_admin,
 )
 from config import get_settings
+import notifications as notif
 
 settings = get_settings()
 models.Base.metadata.create_all(bind=engine)
@@ -56,6 +57,11 @@ def require_business_manager(business_id: int, current_user: models.User, db: Se
     if role == "employee":
         raise HTTPException(status_code=403, detail="Managers and above only")
     return role
+
+def get_biz_name(business_id: int, db: Session) -> str:
+    """Return business name for notification titles. Falls back to ID if not found."""
+    biz = db.query(models.Business).filter(models.Business.id == business_id).first()
+    return biz.name if biz else f"Business #{business_id}"
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -160,7 +166,13 @@ def create_user(user: schemas.UserCreate, current_user: models.User = Depends(re
     from auth import get_user_by_email
     if get_user_by_email(db, user.email):
         raise HTTPException(status_code=409, detail="Email already registered")
-    return crud.create_user(db, user, created_by_id=current_user.id)
+    result = crud.create_user(db, user, created_by_id=current_user.id)
+    notif.on_new_user(
+        full_name  = user.full_name,
+        role       = user.role,
+        created_by = current_user.full_name,
+    )
+    return result
 
 @app.patch("/admin/users/{user_id}", response_model=schemas.UserOut, tags=["Admin"])
 def update_user(user_id: int, data: schemas.UserUpdate, current_user: models.User = Depends(require_admin), db: Session = Depends(get_db)):
@@ -197,14 +209,59 @@ def get_sales(business_id: int, current_user: models.User = Depends(get_current_
 @app.post("/businesses/{business_id}/sales", response_model=schemas.SaleOut, status_code=201, tags=["Sales"])
 def create_sale(business_id: int, sale: schemas.SaleCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     get_business_or_403(business_id, current_user, db)
-    return crud.create_sale(db, sale, business_id=business_id, created_by_id=current_user.id)
+    result = crud.create_sale(db, sale, business_id=business_id, created_by_id=current_user.id)
+    notif.on_sale_created(
+        business_name = get_biz_name(business_id, db),
+        product       = sale.product,
+        units         = sale.units,
+        amount        = sale.amount,
+        rep           = sale.rep or current_user.full_name,
+    )
+    return result
 
 @app.delete("/businesses/{business_id}/sales/{sale_id}", tags=["Sales"])
 def delete_sale(business_id: int, sale_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     require_business_manager(business_id, current_user, db)
+    # Fetch sale BEFORE deleting so we can restore inventory
+    sale = db.query(models.Sale).filter(
+        models.Sale.id == sale_id,
+        models.Sale.business_id == business_id
+    ).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+
+    # Restore inventory if this sale was linked to a SKU
+    restored_sku = None
+    if sale.sku:
+        item = db.query(models.InventoryItem).filter(
+            models.InventoryItem.sku == sale.sku,
+            models.InventoryItem.business_id == business_id,
+        ).first()
+        if item and sale.units and sale.units > 0:
+            import schemas as sc
+            restore = sc.StockMovement(
+                movement_type = "add",
+                qty           = sale.units,
+                reason        = f"Sale #{sale_id} deleted — {sale.units} units restored",
+                received_by   = current_user.full_name,
+            )
+            crud.update_stock(db, sale.sku, business_id, restore, created_by_id=current_user.id)
+            restored_sku = sale.sku
+
     if not crud.delete_sale(db, sale_id, business_id):
         raise HTTPException(status_code=404, detail="Sale not found")
-    return {"deleted": sale_id}
+
+    notif.on_sale_deleted(
+        business_name = get_biz_name(business_id, db),
+        product       = sale.product,
+        amount        = sale.amount,
+        deleted_by    = current_user.full_name,
+    )
+    return {
+        "deleted":      sale_id,
+        "restored_sku": restored_sku,
+        "units_back":   sale.units if restored_sku else 0,
+    }
 
 
 # ── Expenses (business-scoped) ────────────────────────────────────────────────
@@ -216,13 +273,28 @@ def get_expenses(business_id: int, current_user: models.User = Depends(get_curre
 @app.post("/businesses/{business_id}/expenses", response_model=schemas.ExpenseOut, status_code=201, tags=["Expenses"])
 def create_expense(business_id: int, expense: schemas.ExpenseCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     get_business_or_403(business_id, current_user, db)
-    return crud.create_expense(db, expense, business_id=business_id, created_by_id=current_user.id)
+    result = crud.create_expense(db, expense, business_id=business_id, created_by_id=current_user.id)
+    notif.on_expense_created(
+        business_name = get_biz_name(business_id, db),
+        vendor        = expense.vendor,
+        category      = expense.category,
+        amount        = expense.amount,
+    )
+    return result
 
 @app.delete("/businesses/{business_id}/expenses/{expense_id}", tags=["Expenses"])
 def delete_expense(business_id: int, expense_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     require_business_manager(business_id, current_user, db)
+    exp = db.query(models.Expense).filter(models.Expense.id == expense_id, models.Expense.business_id == business_id).first()
     if not crud.delete_expense(db, expense_id, business_id):
         raise HTTPException(status_code=404, detail="Expense not found")
+    if exp:
+        notif.on_expense_deleted(
+            business_name = get_biz_name(business_id, db),
+            description   = exp.description,
+            amount        = exp.amount,
+            deleted_by    = current_user.full_name,
+        )
     return {"deleted": expense_id}
 
 
@@ -279,6 +351,15 @@ def update_stock(business_id: int, sku: str, movement: schemas.StockMovement, cu
     item = crud.update_stock(db, sku, business_id, movement, created_by_id=current_user.id)
     if not item:
         raise HTTPException(status_code=404, detail=f"SKU '{sku}' not found")
+    biz_name = get_biz_name(business_id, db)
+    # Stock received notification
+    if movement.movement_type == "add":
+        notif.on_stock_received(biz_name, item.sku, item.name, movement.qty, item.stock)
+    # Low stock / out of stock alerts after any movement
+    if item.stock == 0:
+        notif.on_out_of_stock(biz_name, item.sku, item.name)
+    elif item.status == "low":
+        notif.on_low_stock(biz_name, item.sku, item.name, item.stock, item.reorder)
     return item
 
 @app.delete("/businesses/{business_id}/inventory/{sku}", tags=["Inventory"])
