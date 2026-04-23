@@ -41,6 +41,27 @@ app = FastAPI(
     description="BizMonitor — Multi-business, JWT auth, Admin panel",
 )
 
+# ── CORS — must be registered before any routes or lifecycle hooks ─────────────
+_raw_origins = settings.ALLOWED_ORIGINS.strip()
+if _raw_origins == "*" or not _raw_origins:
+    # Dev / unconfigured — allow everything
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    _allow_origins = [o.strip().rstrip("/") for o in _raw_origins.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allow_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 @app.on_event("startup")
 def startup_event():
     if _scheduler_available and sched:
@@ -50,21 +71,6 @@ def startup_event():
 def shutdown_event():
     if _scheduler_available and sched:
         sched.stop_scheduler()
-
-# Parse allowed origins — handle wildcard and trim whitespace
-_raw_origins = settings.ALLOWED_ORIGINS.strip()
-if _raw_origins == "*":
-    _allow_origins = ["*"]
-else:
-    _allow_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_allow_origins,
-    allow_credentials=True if _allow_origins != ["*"] else False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 # ── Business Access Helper ────────────────────────────────────────────────────
