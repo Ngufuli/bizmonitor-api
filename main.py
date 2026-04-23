@@ -133,7 +133,25 @@ def update_business(business_id: int, data: schemas.BusinessUpdate, current_user
     db.commit(); db.refresh(biz)
     return biz
 
-@app.get("/businesses/{business_id}/members", response_model=list[schemas.BusinessMemberOut], tags=["Businesses"])
+@app.delete("/businesses/{business_id}", tags=["Businesses"])
+def delete_business(business_id: int, current_user: models.User = Depends(require_admin), db: Session = Depends(get_db)):
+    biz = db.query(models.Business).filter(models.Business.id == business_id).first()
+    if not biz:
+        raise HTTPException(status_code=404, detail="Business not found")
+    # Hard delete — removes business and all related data
+    db.query(models.BusinessMember).filter(models.BusinessMember.business_id == business_id).delete()
+    db.query(models.Sale).filter(models.Sale.business_id == business_id).delete()
+    db.query(models.Expense).filter(models.Expense.business_id == business_id).delete()
+    db.query(models.InventoryItem).filter(models.InventoryItem.business_id == business_id).delete()
+    db.query(models.StockMovementLog).filter(models.StockMovementLog.business_id == business_id).delete()
+    db.query(models.CashBalance).filter(models.CashBalance.business_id == business_id).delete()
+    db.query(models.ActivityLog).filter(models.ActivityLog.business_id == business_id).delete()
+    db.delete(biz)
+    log_activity(db, "deleted_business", f"Deleted business: {biz.name}", user_id=current_user.id)
+    db.commit()
+    return {"deleted": business_id}
+
+
 def get_members(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     get_business_or_403(business_id, current_user, db)
     return crud.get_members(db, business_id)
