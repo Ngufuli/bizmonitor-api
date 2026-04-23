@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Depends, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from datetime import timedelta
+from datetime import timedelta, date as date_type
 from typing import Optional
 
 import models, schemas, crud
@@ -18,6 +18,8 @@ from auth import (
 )
 from config import get_settings
 import notifications as notif
+import reports as rpt
+import scheduler as sched
 
 settings = get_settings()
 models.Base.metadata.create_all(bind=engine)
@@ -27,6 +29,14 @@ app = FastAPI(
     version="3.0.0",
     description="BizMonitor — Multi-business, JWT auth, Admin panel",
 )
+
+@app.on_event("startup")
+def startup_event():
+    sched.start_scheduler()
+
+@app.on_event("shutdown")
+def shutdown_event():
+    sched.stop_scheduler()
 
 # Parse allowed origins — handle wildcard and trim whitespace
 _raw_origins = settings.ALLOWED_ORIGINS.strip()
@@ -216,6 +226,7 @@ def create_sale(business_id: int, sale: schemas.SaleCreate, current_user: models
         units         = sale.units,
         amount        = sale.amount,
         rep           = sale.rep or current_user.full_name,
+        business_id   = business_id,
     )
     return result
 
@@ -279,6 +290,7 @@ def create_expense(business_id: int, expense: schemas.ExpenseCreate, current_use
         vendor        = expense.vendor,
         category      = expense.category,
         amount        = expense.amount,
+        business_id   = business_id,
     )
     return result
 
@@ -352,14 +364,12 @@ def update_stock(business_id: int, sku: str, movement: schemas.StockMovement, cu
     if not item:
         raise HTTPException(status_code=404, detail=f"SKU '{sku}' not found")
     biz_name = get_biz_name(business_id, db)
-    # Stock received notification
     if movement.movement_type == "add":
-        notif.on_stock_received(biz_name, item.sku, item.name, movement.qty, item.stock)
-    # Low stock / out of stock alerts after any movement
+        notif.on_stock_received(biz_name, item.sku, item.name, movement.qty, item.stock, business_id=business_id)
     if item.stock == 0:
-        notif.on_out_of_stock(biz_name, item.sku, item.name)
+        notif.on_out_of_stock(biz_name, item.sku, item.name, business_id=business_id)
     elif item.status == "low":
-        notif.on_low_stock(biz_name, item.sku, item.name, item.stock, item.reorder)
+        notif.on_low_stock(biz_name, item.sku, item.name, item.stock, item.reorder, business_id=business_id)
     return item
 
 @app.delete("/businesses/{business_id}/inventory/{sku}", tags=["Inventory"])
@@ -400,3 +410,122 @@ def delete_cash_balance(business_id: int, balance_id: int, current_user: models.
 def get_summary(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     get_business_or_403(business_id, current_user, db)   # employees allowed
     return crud.get_summary(db, business_id)
+
+
+# ── WhatsApp Test (admin only) ────────────────────────────────────────────────
+@app.post("/admin/test-whatsapp", tags=["Admin"])
+def test_whatsapp(
+    current_user: models.User = Depends(require_admin),
+):
+    """
+    Send a test WhatsApp message to verify Twilio configuration.
+    Call this from the Render shell or any REST client while logged in as admin.
+    GET /admin/test-whatsapp with your JWT token in the Authorization header.
+    """
+    import notifications as n
+    from config import get_settings
+    cfg = get_settings()
+
+    if not cfg.TWILIO_ACCOUNT_SID:
+        return {"status": "not_configured", "message": "Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM and WHATSAPP_NOTIFY_TO in Render environment variables."}
+
+    n.notify(
+        f"✅ *BizMonitor WhatsApp Test*\n"
+        f"Configuration is working!\n"
+        f"Sent by: {current_user.full_name}\n"
+        f"Server: {cfg.APP_NAME}"
+    )
+    recipients = n._get_recipients()
+    return {
+        "status": "sent",
+        "recipients": recipients,
+        "from": cfg.TWILIO_WHATSAPP_FROM,
+        "message": "Test message dispatched to all recipients (check your WhatsApp)"
+    }
+
+
+# ── WhatsApp Reports ──────────────────────────────────────────────────────────
+
+class ReportRequest(schemas.BaseModel):
+    report_type: str = "daily"   # "daily" | "weekly" | "inventory"
+    report_date: Optional[str]   = None  # YYYY-MM-DD, defaults to today
+
+@app.post("/businesses/{business_id}/send-report", tags=["Reports"])
+def send_whatsapp_report(
+    business_id: int,
+    req: ReportRequest,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Send a WhatsApp report on demand for a specific business.
+    Managers and admins only. Returns the message that was sent.
+    """
+    require_business_manager(business_id, current_user, db)
+    biz = db.query(models.Business).filter(models.Business.id == business_id).first()
+    if not biz:
+        raise HTTPException(status_code=404, detail="Business not found")
+
+    from config import get_settings
+    cfg = get_settings()
+    if not cfg.TWILIO_ACCOUNT_SID:
+        raise HTTPException(
+            status_code=503,
+            detail="WhatsApp not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM and WHATSAPP_NOTIFY_TO in environment variables."
+        )
+
+    report_date = None
+    if req.report_date:
+        try:
+            from datetime import date as dt
+            report_date = dt.fromisoformat(req.report_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format, use YYYY-MM-DD")
+
+    try:
+        message = rpt.send_report_for_business(
+            db, business_id, biz.name, req.report_type, report_date
+        )
+        notif_recipients = notif._get_recipients(business_id)
+        return {
+            "status":     "sent",
+            "report_type": req.report_type,
+            "business":   biz.name,
+            "recipients": notif_recipients,
+            "preview":    message[:300] + "…" if len(message) > 300 else message,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Report failed: {e}")
+
+
+@app.get("/admin/scheduler-status", tags=["Admin"])
+def scheduler_status(_: models.User = Depends(require_admin)):
+    """Check scheduler status and next scheduled report times."""
+    return sched.get_next_runs()
+
+
+@app.post("/admin/send-all-reports", tags=["Admin"])
+def send_all_reports_now(
+    report_type: str = "daily",
+    current_user: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually trigger reports for ALL active businesses at once.
+    Admin only. Useful for testing or sending reports outside the schedule.
+    """
+    from config import get_settings
+    cfg = get_settings()
+    if not cfg.TWILIO_ACCOUNT_SID:
+        raise HTTPException(status_code=503, detail="WhatsApp not configured")
+
+    if report_type == "daily":
+        count = rpt.send_daily_reports(db)
+    elif report_type == "weekly":
+        count = rpt.send_weekly_reports(db)
+    else:
+        raise HTTPException(status_code=400, detail="report_type must be 'daily' or 'weekly'")
+
+    return {"status": "sent", "report_type": report_type, "businesses": count}

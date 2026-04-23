@@ -1,11 +1,18 @@
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-sqlalchemy==2.0.30
-psycopg2-binary==2.9.9
-pydantic==2.7.1
-pydantic-settings==2.2.1
-python-multipart==0.0.9
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-bcrypt==4.0.1
-alembic==1.13.1
+# BizMonitor API Requirements
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.7
+httpx>=0.26.0
+
+# WhatsApp notifications via Twilio
+twilio>=9.0.0
+
+# Scheduled reports (daily/weekly WhatsApp reports)
+apscheduler>=3.10.0
+pytz>=2024.1
