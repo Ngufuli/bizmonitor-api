@@ -6,6 +6,7 @@ Multi-business + Admin Panel + Activity Log
 from fastapi import FastAPI, HTTPException, Depends, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import timedelta, date as date_type
 from typing import Optional
@@ -18,8 +19,18 @@ from auth import (
 )
 from config import get_settings
 import notifications as notif
-import reports as rpt
-import scheduler as sched
+
+# Safe imports — won't crash server if apscheduler not yet installed
+try:
+    import reports as rpt
+    import scheduler as sched
+    _scheduler_available = True
+except ImportError as _e:
+    import logging
+    logging.getLogger(__name__).warning(f"Scheduler not available: {_e}. Install apscheduler and pytz.")
+    rpt  = None
+    sched = None
+    _scheduler_available = False
 
 settings = get_settings()
 models.Base.metadata.create_all(bind=engine)
@@ -32,11 +43,13 @@ app = FastAPI(
 
 @app.on_event("startup")
 def startup_event():
-    sched.start_scheduler()
+    if _scheduler_available and sched:
+        sched.start_scheduler()
 
 @app.on_event("shutdown")
 def shutdown_event():
-    sched.stop_scheduler()
+    if _scheduler_available and sched:
+        sched.stop_scheduler()
 
 # Parse allowed origins — handle wildcard and trim whitespace
 _raw_origins = settings.ALLOWED_ORIGINS.strip()
@@ -446,7 +459,7 @@ def test_whatsapp(
 
 # ── WhatsApp Reports ──────────────────────────────────────────────────────────
 
-class ReportRequest(schemas.BaseModel):
+class ReportRequest(BaseModel):
     report_type: str = "daily"   # "daily" | "weekly" | "inventory"
     report_date: Optional[str]   = None  # YYYY-MM-DD, defaults to today
 
@@ -457,10 +470,8 @@ def send_whatsapp_report(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Send a WhatsApp report on demand for a specific business.
-    Managers and admins only. Returns the message that was sent.
-    """
+    if not _scheduler_available or rpt is None:
+        raise HTTPException(status_code=503, detail="Reports module not available. Ensure apscheduler and pytz are installed.")
     require_business_manager(business_id, current_user, db)
     biz = db.query(models.Business).filter(models.Business.id == business_id).first()
     if not biz:
@@ -469,10 +480,7 @@ def send_whatsapp_report(
     from config import get_settings
     cfg = get_settings()
     if not cfg.TWILIO_ACCOUNT_SID:
-        raise HTTPException(
-            status_code=503,
-            detail="WhatsApp not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM and WHATSAPP_NOTIFY_TO in environment variables."
-        )
+        raise HTTPException(status_code=503, detail="WhatsApp not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM and WHATSAPP_NOTIFY_TO in environment variables.")
 
     report_date = None
     if req.report_date:
@@ -483,16 +491,14 @@ def send_whatsapp_report(
             raise HTTPException(status_code=400, detail="Invalid date format, use YYYY-MM-DD")
 
     try:
-        message = rpt.send_report_for_business(
-            db, business_id, biz.name, req.report_type, report_date
-        )
+        message = rpt.send_report_for_business(db, business_id, biz.name, req.report_type, report_date)
         notif_recipients = notif._get_recipients(business_id)
         return {
-            "status":     "sent",
+            "status":      "sent",
             "report_type": req.report_type,
-            "business":   biz.name,
-            "recipients": notif_recipients,
-            "preview":    message[:300] + "…" if len(message) > 300 else message,
+            "business":    biz.name,
+            "recipients":  notif_recipients,
+            "preview":     message[:300] + "…" if len(message) > 300 else message,
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -502,7 +508,8 @@ def send_whatsapp_report(
 
 @app.get("/admin/scheduler-status", tags=["Admin"])
 def scheduler_status(_: models.User = Depends(require_admin)):
-    """Check scheduler status and next scheduled report times."""
+    if not _scheduler_available or sched is None:
+        return {"status": "not_available", "reason": "apscheduler not installed"}
     return sched.get_next_runs()
 
 
@@ -512,10 +519,8 @@ def send_all_reports_now(
     current_user: models.User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """
-    Manually trigger reports for ALL active businesses at once.
-    Admin only. Useful for testing or sending reports outside the schedule.
-    """
+    if not _scheduler_available or rpt is None:
+        raise HTTPException(status_code=503, detail="Reports module not available")
     from config import get_settings
     cfg = get_settings()
     if not cfg.TWILIO_ACCOUNT_SID:

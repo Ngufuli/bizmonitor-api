@@ -2,7 +2,13 @@
 schemas.py — Pydantic request/response models
 """
 
-from pydantic import BaseModel, Field, EmailStr, validator
+from pydantic import BaseModel, Field, field_validator
+
+# EmailStr requires email-validator package — use str as fallback if not installed
+try:
+    from pydantic import EmailStr
+except ImportError:
+    EmailStr = str  # type: ignore
 from typing import Optional, List
 from datetime import date, datetime
 from models import UserRole
@@ -126,7 +132,8 @@ class ExpenseCreate(BaseModel):
     description:  str   = Field(..., min_length=1)
     submitted_by: Optional[str] = None
 
-    @validator("category")
+    @field_validator("category")
+    @classmethod
     def valid_category(cls, v):
         if v not in VALID_CATEGORIES:
             raise ValueError(f"Must be one of: {VALID_CATEGORIES}")
@@ -179,7 +186,8 @@ class StockMovement(BaseModel):
     received_by:   Optional[str]   = None
     new_unit_cost: Optional[float] = None   # optionally update unit cost when receiving stock
 
-    @validator("movement_type")
+    @field_validator("movement_type")
+    @classmethod
     def valid_type(cls, v):
         if v not in ("add", "remove", "adjust"):
             raise ValueError("Must be add, remove, or adjust")
