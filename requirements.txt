@@ -8,12 +8,6 @@ pydantic-settings>=2.0.0
 pydantic[email]>=2.0.0
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
+bcrypt==4.0.1
 python-multipart>=0.0.7
 httpx>=0.26.0
-
-# WhatsApp notifications via Twilio
-twilio>=9.0.0
-
-# Scheduled reports (daily/weekly WhatsApp reports)
-apscheduler>=3.10.0
-pytz>=2024.1
