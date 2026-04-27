@@ -158,7 +158,16 @@ def get_members(business_id: int, current_user: models.User = Depends(get_curren
 
 @app.post("/businesses/{business_id}/members", tags=["Businesses"])
 def add_member(business_id: int, data: schemas.BusinessMemberAdd, current_user: models.User = Depends(require_admin), db: Session = Depends(get_db)):
-    return crud.add_member(db, business_id, data, added_by_id=current_user.id)
+    # Verify business exists
+    biz = db.query(models.Business).filter(models.Business.id == business_id).first()
+    if not biz:
+        raise HTTPException(status_code=404, detail="Business not found")
+    # Verify user exists
+    user = db.query(models.User).filter(models.User.id == data.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User {data.user_id} not found")
+    member = crud.add_member(db, business_id, data, added_by_id=current_user.id)
+    return {"id": member.id, "user_id": member.user_id, "business_id": member.business_id, "role": member.role}
 
 @app.delete("/businesses/{business_id}/members/{user_id}", tags=["Businesses"])
 def remove_member(business_id: int, user_id: int, _: models.User = Depends(require_admin), db: Session = Depends(get_db)):

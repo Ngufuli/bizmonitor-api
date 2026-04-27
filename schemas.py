@@ -55,13 +55,20 @@ class BusinessOut(BaseModel):
 
 class BusinessMemberAdd(BaseModel):
     user_id: int
-    role:    UserRole = UserRole.employee
+    role:    str = "employee"
+
+    @field_validator("role")
+    @classmethod
+    def valid_role(cls, v):
+        if v not in ("admin", "manager", "employee"):
+            raise ValueError("Role must be admin, manager or employee")
+        return v
 
 class BusinessMemberOut(BaseModel):
     id:          int
     user_id:     int
     business_id: int
-    role:        UserRole
+    role:        str
     user:        Optional["UserOut"] = None
 
     class Config:
