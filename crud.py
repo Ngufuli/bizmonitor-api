@@ -42,7 +42,7 @@ def create_business(db: Session, data: schemas.BusinessCreate, creator_id: int):
     biz = models.Business(name=data.name, industry=data.industry, currency=data.currency)
     db.add(biz)
     db.flush()
-    member = models.BusinessMember(business_id=biz.id, user_id=creator_id, role="admin")
+    member = models.BusinessMember(business_id=biz.id, user_id=creator_id, role=models.UserRole.admin)
     db.add(member)
     log_activity(db, "created_business", f"Created: {data.name}", user_id=creator_id, business_id=biz.id)
     db.commit()
