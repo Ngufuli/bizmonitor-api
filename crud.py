@@ -60,18 +60,24 @@ def get_user_role_in_business(db: Session, user_id: int, business_id: int):
     return member.role if member else None
 
 def add_member(db: Session, business_id: int, data: schemas.BusinessMemberAdd, added_by_id: int):
+    # Convert string role to enum safely
+    try:
+        role = models.UserRole(data.role)
+    except ValueError:
+        role = models.UserRole.employee
+
     existing = db.query(models.BusinessMember).filter(
         models.BusinessMember.business_id == business_id,
         models.BusinessMember.user_id == data.user_id
     ).first()
     if existing:
-        existing.role = data.role
+        existing.role = role
         db.commit()
         db.refresh(existing)
         return existing
-    member = models.BusinessMember(business_id=business_id, user_id=data.user_id, role=data.role)
+    member = models.BusinessMember(business_id=business_id, user_id=data.user_id, role=role)
     db.add(member)
-    log_activity(db, "added_member", f"Added user {data.user_id} as {data.role}", user_id=added_by_id, business_id=business_id)
+    log_activity(db, "added_member", f"Added user {data.user_id} as {role.value}", user_id=added_by_id, business_id=business_id)
     db.commit()
     db.refresh(member)
     return member
@@ -98,14 +104,18 @@ def get_user(db: Session, user_id: int):
     return db.query(models.User).filter(models.User.id == user_id).first()
 
 def create_user(db: Session, user: schemas.UserCreate, created_by_id: int = None):
+    try:
+        role = models.UserRole(user.role)
+    except (ValueError, KeyError):
+        role = models.UserRole.employee
     db_user = models.User(
         email=user.email.lower(), full_name=user.full_name,
         hashed_password=hash_password(user.password),
-        role=user.role, department=user.department,
+        role=role, department=user.department,
     )
     db.add(db_user)
     db.flush()
-    log_activity(db, "created_user", f"Created: {user.email} [{user.role}]", user_id=created_by_id)
+    log_activity(db, "created_user", f"Created: {user.email} [{role.value}]", user_id=created_by_id)
     db.commit()
     db.refresh(db_user)
     return db_user
