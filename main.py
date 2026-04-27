@@ -152,6 +152,7 @@ def delete_business(business_id: int, current_user: models.User = Depends(requir
     return {"deleted": business_id}
 
 
+@app.get("/businesses/{business_id}/members", response_model=list[schemas.BusinessMemberOut], tags=["Businesses"])
 def get_members(business_id: int, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     get_business_or_403(business_id, current_user, db)
     return crud.get_members(db, business_id)
