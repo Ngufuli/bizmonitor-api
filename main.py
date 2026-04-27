@@ -111,7 +111,7 @@ def me(current_user: models.User = Depends(get_current_user)):
 def list_my_businesses(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.role == "admin":
         return crud.get_all_businesses(db)
-    return crud.get_user_businesses(db, current_user.id)
+    return crud.get_businesses_for_user(db, current_user.id)
 
 @app.post("/businesses", response_model=schemas.BusinessOut, status_code=201, tags=["Businesses"])
 def create_business(data: schemas.BusinessCreate, current_user: models.User = Depends(require_admin), db: Session = Depends(get_db)):
